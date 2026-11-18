@@ -1,0 +1,7 @@
+base   fmeta
+author Benoit
+email  benoit.thibaudeau64@gmail.com
+date   2026-11-17
+name   Fmeta (en-têtes de fiches)
+desc   Lit l'en-tête YAML (frontmatter) d'une page, style Obsidian, l'affiche sous forme de fiche (statut, dates, hashtags) et tient un index permettant de lister les pages partageant un tag, une date, un statut...
+url    https://www.dokuwiki.org/plugins

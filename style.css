@@ -1,0 +1,63 @@
+/* Fmeta : carte d'en-tête et listes de fiches (s'adapte aux couleurs du thème) */
+
+.plugin_fmeta {
+    margin: 0 0 1.2em;
+    padding: .6em .9em .7em;
+    border: 1px solid __border__;
+    border-left: 4px solid __link__;
+    background: __background_alt__;
+    border-radius: 0 6px 6px 0;
+    font-size: .92em;
+    line-height: 1.5;
+}
+.plugin_fmeta .fm-head { margin-bottom: .3em; }
+.plugin_fmeta .fm-badge,
+.plugin_fmeta_table .fm-badge {
+    display: inline-block;
+    padding: 0 .7em;
+    border-radius: 1em;
+    color: #fff;
+    font-weight: 700;
+    font-size: .9em;
+    background: #6b7280;
+    white-space: nowrap;
+}
+.plugin_fmeta .fm-chip {
+    display: inline-block;
+    padding: 0 .7em;
+    border: 1px solid __border__;
+    border-radius: 1em;
+    background: #fff;
+    font-size: .9em;
+}
+.plugin_fmeta dl.fm-fields {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: .1em 1em;
+    margin: .3em 0;
+}
+.plugin_fmeta dl.fm-fields dt { font-weight: 700; color: __text_neu__; margin: 0; }
+.plugin_fmeta dl.fm-fields dd { margin: 0; }
+.plugin_fmeta ul.fm-tags { list-style: none; margin: .3em 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: .3em; }
+.plugin_fmeta ul.fm-tags li { margin: 0; padding: 0; background: none; }
+a.fm-tag {
+    display: inline-block;
+    padding: 0 .6em;
+    border-radius: 1em;
+    background: #fff;
+    border: 1px solid __border__;
+    text-decoration: none;
+    white-space: nowrap;
+}
+/* spécificité supérieure à celle des liens du thème (.dokuwiki a:hover), sinon le texte reste de la couleur du fond */
+.dokuwiki a.fm-tag:hover, .dokuwiki a.fm-tag:focus { background: __link__; color: #fff; text-decoration: none; }
+.plugin_fmeta .fm-alert {
+    margin-top: .5em;
+    padding: .25em .7em;
+    border-left: 4px solid #c77700;
+    background: #fff4e0;
+    color: #6b3e00;
+}
+.plugin_fmeta .fm-alert.fm-danger { border-left-color: #b3261e; background: #fbe9e9; color: #8c1c16; }
+
+table.plugin_fmeta_table td, table.plugin_fmeta_table th { vertical-align: top; }
