@@ -39,6 +39,15 @@ class action_plugin_fmeta extends ActionPlugin
         $id = ($ns ? $ns . ':' : '') . $name;
 
         $text = $event->data[0][1];
+        // date de dernière modification, sauf pour les enregistrements automatiques (case à cocher...)
+        // et la suppression d'une page (texte vide)
+        if (trim($text) !== '' && empty($GLOBALS['fmeta_keep_updated'])) {
+            $touched = $helper->touchUpdated($text);
+            if ($touched !== $text) {
+                $text = $touched;
+                $event->data[0][1] = $text;
+            }
+        }
         $block = $helper->split($text);
         if ($block !== null && !$block['open']) {
             $text = "---\n" . $text;
@@ -50,6 +59,16 @@ class action_plugin_fmeta extends ActionPlugin
     /** Les pages ?do=fmlist restent à traiter par TPL_ACT_UNKNOWN */
     public function actPreprocess(Event $event)
     {
+        if ($event->data === 'save') {
+            global $ID, $PRE, $TEXT, $SUF;
+            /** @var helper_plugin_fmeta $helper */
+            $helper = plugin_load('helper', 'fmeta');
+            if ($helper->ownerMissing((string)$ID, (string)con($PRE, $TEXT, $SUF, true))) {
+                msg($helper->getLang('owner_missing'), -1);
+                $event->data = 'preview';      // le texte saisi est conservé dans l'éditeur
+            }
+            return;
+        }
         if ($event->data === 'fmlist') {
             $event->preventDefault();
             $event->stopPropagation();
@@ -71,7 +90,7 @@ class action_plugin_fmeta extends ActionPlugin
         $rows = $helper->query([$field => $value]);
 
         $label = $helper->getLang('f_' . $field) ?: ucfirst($field);
-        $shown = in_array($field, ['created', 'revue', 'expire'], true) ? $helper->dateLabel($value) : $value;
+        $shown = in_array($field, ['created', 'updated', 'revue', 'expire'], true) ? $helper->dateLabel($value) : $value;
         if ($field === 'tag') $shown = '#' . $shown;
 
         echo '<h1>' . hsc(sprintf($helper->getLang('list_title'), $label, $shown)) . '</h1>';

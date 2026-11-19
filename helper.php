@@ -1,11 +1,15 @@
 <?php
 
+use dokuwiki\Extension\Event;
 use dokuwiki\Extension\Plugin;
 use dokuwiki\Utf8\Clean;
 
 /**
  * Fmeta : lecture de l'en-tête YAML des pages, index des fiches, rendu de la carte d'en-tête
- * et des tableaux de pages. Les plugins fmtags et fmlife s'appuient sur ce helper.
+ * et des tableaux de pages. Les plugins fmlife, fmtags, fmtable et fmvocab s'appuient sur ce helper ;
+ * fmeta, lui, ne dépend d'aucun d'eux.
+ *
+ * Points d'extension (événements DokuWiki, voir README.md) : FMETA_ENTRY_ENRICH, FMETA_BADGE, FMETA_ALERTS.
  */
 class helper_plugin_fmeta extends Plugin
 {
@@ -14,8 +18,10 @@ class helper_plugin_fmeta extends Plugin
         'title'   => ['title', 'titre'],
         'status'  => ['status', 'statut', 'etat', 'état'],
         'created' => ['created', 'creation', 'création', 'cree', 'créé'],
-        'revue'   => ['last-revue', 'revue', 'last-review', 'review', 'updated', 'modified', 'modifie', 'modifié', 'last-updated'],
-        'expire'  => ['expire', 'expires', 'expiration', 'expiry', 'valid-until', 'validite', 'validité'],
+        // dernière revue = validation manuelle de la fiche ; différente de la dernière modification (updated)
+        'revue'   => ['revue', 'last-revue', 'dernière_revue', 'derniere_revue', 'dernière-revue', 'derniere-revue', 'last-review', 'review'],
+        'updated' => ['updated', 'modified', 'modifie', 'modifié', 'last-updated', 'last-modified', 'derniere_modification', 'dernière_modification'],
+        'expire'  => ['expire', 'expired', 'expires', 'expiration', 'expiry', 'valid-until', 'validite', 'validité'],
         'tags'    => ['tags', 'tag', 'hashtags', 'etiquettes', 'étiquettes'],
     ];
 
@@ -155,7 +161,7 @@ class helper_plugin_fmeta extends Plugin
      */
     public function normalize(array $raw): array
     {
-        $e = ['title' => '', 'status' => '', 'created' => '', 'revue' => '', 'expire' => '', 'tags' => [], 'fields' => []];
+        $e = ['title' => '', 'status' => '', 'created' => '', 'updated' => '', 'revue' => '', 'expire' => '', 'tags' => [], 'fields' => []];
         foreach (self::ALIASES as $canon => $aliases) {
             foreach ($aliases as $alias) {
                 if (!array_key_exists($alias, $raw)) continue;
@@ -167,7 +173,7 @@ class helper_plugin_fmeta extends Plugin
                         $t = trim(ltrim(trim((string)$t), '#'));
                         if ($t !== '') $e['tags'][] = $t;
                     }
-                } elseif (in_array($canon, ['created', 'revue', 'expire'], true)) {
+                } elseif (in_array($canon, ['created', 'updated', 'revue', 'expire'], true)) {
                     if ($e[$canon] === '') $e[$canon] = $this->date(is_array($val) ? '' : $val);
                 } elseif ($e[$canon] === '') {
                     $e[$canon] = is_array($val) ? implode(', ', $val) : (string)$val;
@@ -180,6 +186,72 @@ class helper_plugin_fmeta extends Plugin
             $e['fields'][$k] = $v;
         }
         return $e;
+    }
+
+    /**
+     * Vrai si la page doit avoir un responsable (owner) et n'en a pas.
+     * Dispensées : pages vides (suppression), nature « accueil », espaces listés dans owner_exempt_ns.
+     */
+    public function ownerMissing(string $id, string $text): bool
+    {
+        if (!$this->getConf('owner_required') || trim($text) === '') return false;
+        foreach (preg_split('/[\s,;]+/', (string)$this->getConf('owner_exempt_ns'), -1, PREG_SPLIT_NO_EMPTY) as $ns) {
+            $ns = trim($ns, ':');
+            if ($id === $ns || str_starts_with($id, $ns . ':')) return false;
+        }
+        $e = $this->read($text);
+        if ($e === null) return true;
+        $fields = array_change_key_case($e['fields'], CASE_LOWER);
+        if (mb_strtolower(trim((string)($fields['nature'] ?? ''))) === 'accueil') return false;
+        $owner = $fields['owner'] ?? '';
+        return trim(is_array($owner) ? implode('', $owner) : (string)$owner) === '';
+    }
+
+    /**
+     * Met la date de dernière modification (updated) de l'en-tête à aujourd'hui.
+     *
+     * Sans en-tête, le texte est rendu tel quel. Une clé « updated » (ou « modified »...) existante est
+     * réécrite ; sinon la ligne est ajoutée après « created », ou en fin d'en-tête. La date de revue
+     * (revue / last-revue) n'est jamais touchée : c'est une validation manuelle.
+     *
+     * @param string $text texte de la page
+     * @return string texte mis à jour
+     */
+    public function touchUpdated(string $text): string
+    {
+        $block = $this->split($text);
+        if ($block === null || trim($block['yaml']) === '') return $text;
+
+        $today = date('Y-m-d');
+        $lines = explode("\n", $text);
+        $first = (int)$block['first'];
+        $close = (int)$block['close'];
+        $keys = array_map('preg_quote', self::ALIASES['updated']);
+        $keyRe = '/^(' . implode('|', $keys) . ')\s*:/iu';
+        $createdRe = '/^(' . implode('|', array_map('preg_quote', self::ALIASES['created'])) . ')\s*:/iu';
+
+        $at = null;
+        $createdAt = null;
+        for ($i = $first; $i < $close; $i++) {
+            if ($at === null && preg_match($keyRe, $lines[$i], $m)) $at = [$i, $m[1]];
+            if ($createdAt === null && preg_match($createdRe, $lines[$i])) $createdAt = $i;
+        }
+
+        $eol = (substr($lines[$first], -1) === "\r") ? "\r" : '';
+        if ($at !== null) {
+            $new = $at[1] . ': ' . $today . $eol;
+            if ($lines[$at[0]] === $new) return $text;
+            $lines[$at[0]] = $new;
+        } else {
+            // après « created » et ses éventuelles lignes de suite (indentées ou en liste), sinon en fin d'en-tête
+            $pos = $close;
+            if ($createdAt !== null) {
+                $pos = $createdAt + 1;
+                while ($pos < $close && preg_match('/^(\s+|-\s)/', $lines[$pos])) $pos++;
+            }
+            array_splice($lines, $pos, 0, ['updated: ' . $today . $eol]);
+        }
+        return implode("\n", $lines);
     }
 
     /**
@@ -327,12 +399,11 @@ class helper_plugin_fmeta extends Plugin
      */
     public function query(array $filters = []): array
     {
-        $life = plugin_load('helper', 'fmlife');
         $out = [];
         foreach ($this->load() as $id => $e) {
             if (auth_quickaclcheck($id) < AUTH_READ) continue;
             $e['id'] = $id;
-            $e['eff'] = $life ? $life->effective($e) : ($e['status'] ?? '');
+            $e = $this->enrich($e);
             foreach ($filters as $k => $v) {
                 if ($v === '' || $v === null) continue;
                 if (!$this->matches($e, $k, mb_strtolower((string)$v))) continue 2;
@@ -340,8 +411,8 @@ class helper_plugin_fmeta extends Plugin
             $out[] = $e;
         }
         usort($out, static function ($a, $b) {
-            $da = $a['revue'] ?: $a['created'];
-            $db = $b['revue'] ?: $b['created'];
+            $da = $a['revue'] ?: $a['updated'] ?: $a['created'];
+            $db = $b['revue'] ?: $b['updated'] ?: $b['created'];
             return [$db, $a['title']] <=> [$da, $b['title']];
         });
         return $out;
@@ -355,9 +426,10 @@ class helper_plugin_fmeta extends Plugin
             case 'status':
                 return mb_strtolower($e['eff']) === $v || mb_strtolower($e['status']) === $v;
             case 'created':
+            case 'updated':
             case 'revue':
             case 'expire':
-                return $e[$field] !== '' && str_starts_with($e[$field], $v);
+                return ($e[$field] ?? '') !== '' && str_starts_with($e[$field], $v);
             default:
                 $val = $e['fields'][$field] ?? null;
                 if ($val === null) return false;
@@ -411,13 +483,44 @@ class helper_plugin_fmeta extends Plugin
         return '<a class="fm-tag" href="' . $this->url('tag', $tag) . '">#' . hsc($tag) . '</a>';
     }
 
+    /**
+     * Enrichit une entrée via l'événement FMETA_ENTRY_ENRICH.
+     *
+     * Sans abonné, l'entrée reçoit seulement 'eff' (= statut brut) et 'computed' (vide). Un plugin abonné peut
+     * remplacer 'eff' (statut effectif) et remplir 'computed' (champs calculés, utilisables dans les tableaux).
+     */
+    public function enrich(array $e): array
+    {
+        $e['eff'] = $e['status'] ?? '';
+        $e['computed'] = [];
+        $data = ['entry' => $e];
+        Event::createAndTrigger('FMETA_ENTRY_ENRICH', $data);
+        return $data['entry'];
+    }
+
+    /** Alertes d'une entrée, fournies par les abonnés de FMETA_ALERTS : [['level' => ..., 'text' => ...], ...] */
+    public function alertsFor(array $e): array
+    {
+        $data = ['entry' => $e, 'alerts' => [], 'supported' => false];
+        Event::createAndTrigger('FMETA_ALERTS', $data);
+        return $data['alerts'];
+    }
+
+    /** Vrai si un plugin fournit des alertes (abonné à FMETA_ALERTS) */
+    public function supportsAlerts(): bool
+    {
+        $data = ['entry' => [], 'alerts' => [], 'supported' => false];
+        Event::createAndTrigger('FMETA_ALERTS', $data);
+        return $data['supported'];
+    }
+
     public function badge(array $e): string
     {
-        $life = plugin_load('helper', 'fmlife');
         $raw = $e['eff'] ?? $e['status'] ?? '';
         if ($raw === '') return '';
-        if ($life) return $life->badge($raw, $e['status'] ?? null);
-        return '<span class="fm-badge">' . hsc($raw) . '</span>';
+        $data = ['entry' => $e, 'raw' => $raw, 'html' => ''];
+        Event::createAndTrigger('FMETA_BADGE', $data);
+        return $data['html'] !== '' ? $data['html'] : '<span class="fm-badge">' . hsc($raw) . '</span>';
     }
 
     /**
@@ -428,8 +531,7 @@ class helper_plugin_fmeta extends Plugin
      */
     public function card(array $e): string
     {
-        $life = plugin_load('helper', 'fmlife');
-        $e['eff'] = $life ? $life->effective($e) : $e['status'];
+        $e = $this->enrich($e);
 
         $h = '<div class="plugin_fmeta">';
         $h .= '<div class="fm-head">' . $this->badge($e);
@@ -441,10 +543,10 @@ class helper_plugin_fmeta extends Plugin
         $h .= '</div>';
 
         $rows = '';
-        foreach (['created', 'revue', 'expire'] as $k) {
-            $val = $e[$k];
-            if ($k === 'expire' && $val === '' && $life) {
-                $val = $life->expiry($e);
+        foreach (['created', 'updated', 'revue', 'expire'] as $k) {
+            $val = $e[$k] ?? '';
+            if ($k === 'expire' && $val === '') {
+                $val = (string)($e['computed']['expire'] ?? '');
                 if ($val !== '') $rows .= '<dt>' . hsc($this->getLang("f_$k")) . '</dt><dd>' . $this->dateLink($k, $val) . ' <em>(' . hsc($this->getLang('computed')) . ')</em></dd>';
                 continue;
             }
@@ -467,10 +569,8 @@ class helper_plugin_fmeta extends Plugin
             $h .= '</ul>';
         }
 
-        if ($life) {
-            foreach ($life->alerts($e) as $a) {
-                $h .= '<div class="fm-alert fm-' . $a['level'] . '">' . hsc($a['text']) . '</div>';
-            }
+        foreach ($this->alertsFor($e) as $a) {
+            $h .= '<div class="fm-alert fm-' . $a['level'] . '">' . hsc($a['text']) . '</div>';
         }
         return $h . '</div>';
     }
@@ -479,26 +579,36 @@ class helper_plugin_fmeta extends Plugin
      * Tableau de fiches
      *
      * @param array[] $rows résultat de query()
-     * @param bool $alerts ajoute une colonne d'alertes (fmlife)
+     * @param bool $alerts ajoute une colonne d'alertes si un plugin en fournit (FMETA_ALERTS)
      * @return string HTML
      */
+    /** Cellule « expire » : date saisie, sinon date calculée (revue/modification + durée de validité) en italique */
+    protected function expireCell(array $e): string
+    {
+        if (($e['expire'] ?? '') !== '') return $this->dateLink('expire', $e['expire']);
+        $calc = (string)($e['computed']['expire'] ?? '');
+        return $calc === '' ? '' : '<em title="' . hsc($this->getLang('computed')) . '">' . $this->dateLink('expire', $calc) . '</em>';
+    }
+
     public function table(array $rows, bool $alerts = false): string
     {
         if (!$rows) return '<p>' . hsc($this->getLang('none')) . '</p>';
-        $life = $alerts ? plugin_load('helper', 'fmlife') : null;
+        $withAlerts = $alerts && $this->supportsAlerts();
 
         $h = '<table class="inline plugin_fmeta_table"><thead><tr><th>' . hsc($this->getLang('col_page')) . '</th><th>' .
             hsc($this->getLang('f_status')) . '</th><th>' . hsc($this->getLang('f_created')) . '</th><th>' .
-            hsc($this->getLang('f_revue')) . '</th><th>' . hsc($this->getLang('f_expire')) . '</th><th>' .
-            hsc($this->getLang('f_tags')) . '</th>' . ($life ? '<th>' . hsc($this->getLang('col_alert')) . '</th>' : '') .
+            hsc($this->getLang('f_updated')) . '</th><th>' . hsc($this->getLang('f_revue')) . '</th><th>' .
+            hsc($this->getLang('f_expire')) . '</th><th>' .
+            hsc($this->getLang('f_tags')) . '</th>' . ($withAlerts ? '<th>' . hsc($this->getLang('col_alert')) . '</th>' : '') .
             '</tr></thead><tbody>';
         foreach ($rows as $e) {
             $tags = implode(' ', array_map([$this, 'tagLink'], $e['tags']));
             $h .= '<tr><td><a href="' . hsc(wl($e['id'])) . '">' . hsc($e['title']) . '</a></td><td>' . $this->badge($e) .
-                '</td><td>' . $this->dateLink('created', $e['created']) . '</td><td>' . $this->dateLink('revue', $e['revue']) .
-                '</td><td>' . $this->dateLink('expire', $e['expire']) . '</td><td>' . $tags . '</td>';
-            if ($life) {
-                $h .= '<td>' . hsc(implode(' ; ', array_column($life->alerts($e), 'text'))) . '</td>';
+                '</td><td>' . $this->dateLink('created', $e['created']) . '</td><td>' . $this->dateLink('updated', $e['updated'] ?? '') .
+                '</td><td>' . $this->dateLink('revue', $e['revue']) .
+                '</td><td>' . $this->expireCell($e) . '</td><td>' . $tags . '</td>';
+            if ($withAlerts) {
+                $h .= '<td>' . hsc(implode(' ; ', array_column($this->alertsFor($e), 'text'))) . '</td>';
             }
             $h .= '</tr>';
         }

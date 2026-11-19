@@ -9,6 +9,7 @@ $lang['f_nature'] = 'Nature';
 $lang['f_projet'] = 'Projet';
 $lang['f_status'] = 'Statut';
 $lang['f_created'] = 'Créée le';
+$lang['f_updated'] = 'Dernière modification';
 $lang['f_revue'] = 'Dernière revue';
 $lang['f_expire'] = 'Expire le';
 $lang['f_tags'] = 'Tags';
@@ -24,3 +25,5 @@ $lang['list_count'] = '%d fiche(s).';
 $lang['none'] = 'Aucune fiche.';
 $lang['col_page'] = 'Page';
 $lang['col_alert'] = 'Alerte';
+
+$lang['owner_missing'] = 'Enregistrement refusé : l\'en-tête de la page doit indiquer un responsable. Ajoutez en tête de page un bloc « --- » contenant une ligne « owner: Prénom Nom » (exemple : owner: Benoit Thibaudeau).';

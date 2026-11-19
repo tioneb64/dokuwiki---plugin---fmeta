@@ -9,6 +9,7 @@ $lang['f_nature'] = 'Nature';
 $lang['f_projet'] = 'Project';
 $lang['f_status'] = 'Status';
 $lang['f_created'] = 'Created';
+$lang['f_updated'] = 'Last modified';
 $lang['f_revue'] = 'Last review';
 $lang['f_expire'] = 'Expires';
 $lang['f_tags'] = 'Tags';
